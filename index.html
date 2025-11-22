@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Typing Practice — Custom Letters</title>
+<style>
+  :root{
+    --bg:#0b0f12;
+    --panel:#0f1417;
+    --muted:#9fb0bf;
+    --accent:#38bdf8;
+    --good:#4ade80;
+    --bad:#fb7185;
+  }
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg);
+    color:#e6eef8;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;
+    display:flex;
+    justify-content:center;
+    padding:28px;
+    box-sizing:border-box;
+  }
+  .card{
+    width:100%;
+    max-width:1100px;
+    background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    padding:18px;
+    border-radius:12px;
+    box-shadow:0 10px 30px rgba(0,0,0,0.6);
+  }
+  h1{margin:0 0 12px 0;color:var(--accent);font-size:20px}
+  #lesson {
+    background:var(--panel);
+    padding:18px;
+    border-radius:10px;
+    white-space:normal;
+    word-break:break-word;
+    line-height:1.6;
+    font-size:18px;
+    max-height:60vh;
+    overflow:auto;
+    border:1px solid rgba(255,255,255,0.02);
+    caret-color:transparent;
+  }
+  .char{display:inline-block;padding:0 1px;border-radius:3px}
+  .correct{ color:var(--good); background: rgba(74,222,128,0.06) }
+  .incorrect{ color:var(--bad); background: rgba(251,113,133,0.06); text-decoration: underline rgba(251,113,133,0.12) wavy }
+  .current{ background:var(--accent); color:#02212a; font-weight:700 }
+  .controls{display:flex;gap:12px;align-items:center;margin-top:12px;flex-wrap:wrap}
+  .stat{background:rgba(255,255,255,0.02);padding:8px 12px;border-radius:8px;font-weight:700}
+  .label{font-size:12px;color:var(--muted);display:block}
+  #progressWrap{background:#222;border-radius:999px;height:12px;overflow:hidden;flex:1;min-width:140px}
+  #progress{height:100%;width:0;background:linear-gradient(90deg,var(--accent),#7dd3fc);transition:width .08s linear}
+  button{background:var(--accent);border:none;color:#002428;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:700}
+  button.secondary{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
+  p.hint{color:var(--muted);margin-top:12px;font-size:13px}
+  @media(max-width:720px){#lesson{font-size:16px}}
+</style>
+</head>
+<body>
+  <main class="card" role="main">
+    <h1>Typing Practice — Custom letters</h1>
+
+    <div id="lesson" tabindex="0" aria-label="Typing text. Click here and start typing."></div>
+
+    <div class="controls" style="margin-top:12px">
+      <div style="display:flex;gap:10px;align-items:center">
+        <div class="stat"><span class="label">WPM</span><div id="wpm">0</div></div>
+        <div class="stat"><span class="label">Accuracy</span><div id="acc">100%</div></div>
+      </div>
+
+      <div id="progressWrap" aria-hidden="true"><div id="progress"></div></div>
+
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button id="restart">Restart</button>
+        <button id="focus" class="secondary">Focus</button>
+      </div>
+    </div>
+
+    <p class="hint">Type directly — Backspace undoes previous character. Modifier keys (Ctrl/Alt/Meta) are ignored.</p>
+  </main>
+
+<script>
+/*
+- Allowed letters: a s d f g h j k l ; u m y n r v t g b i e c
+- This script generates a continuous multi-line paragraph composed from those letters and spaces.
+- Typing behavior: per-character real-time correctness, cursor highlight, progress, WPM, accuracy.
+*/
+
+// letter pool (only allowed chars)
+const pool = ['a','s','d','f','g','h','j','k','l',';','u','m','y','n','r','v','t','b','i','e','c'];
+
+// generate a paragraph made of groups (to keep practice readable)
+// parameters: groups count and group length range
+function generateText(groups = 700, minLen = 3, maxLen = 8) {
+  const out = [];
+  for (let i=0;i<groups;i++){
+    const len = minLen + Math.floor(Math.random() * (maxLen - minLen + 1));
+    let g = '';
+    for (let j=0;j<len;j++){
+      g += pool[Math.floor(Math.random() * pool.length)];
+    }
+    out.push(g);
+  }
+  // join with single spaces so text wraps naturally
+  return out.join(' ');
+}
+
+// create a fairly long text ~ D (4000-6000 chars). adjust groups if needed.
+let practiceText = generateText(1000,3,7); // ~5000-6000 chars depending on choices
+
+// expose text in console for debugging
+console.log('practice length', practiceText.length);
+
+// app state
+const lesson = document.getElementById('lesson');
+const progress = document.getElementById('progress');
+const wpmEl = document.getElementById('wpm');
+const accEl = document.getElementById('acc');
+const restartBtn = document.getElementById('restart');
+const focusBtn = document.getElementById('focus');
+
+let index = 0;
+let typed = new Array(practiceText.length); // undefined / true / false
+let totalTyped = 0;
+let correctCount = 0;
+let startTs = null;
+
+// render text into spans (one-time)
+function renderSpans(){
+  const frag = document.createDocumentFragment();
+  // build using a document fragment for performance
+  for (let i=0;i<practiceText.length;i++){
+    const ch = practiceText[i];
+    const span = document.createElement('span');
+    span.className = 'char';
+    span.dataset.i = i;
+    span.textContent = ch;
+    frag.appendChild(span);
+  }
+  lesson.innerHTML = ''; // clear
+  lesson.appendChild(frag);
+  highlight();
+  updateStats();
+}
+
+// highlight current and previously typed
+function highlight(){
+  const spans = lesson.querySelectorAll('.char');
+  // remove classes in ranges around index to reduce DOM thrash (simple loop here)
+  for (let i=0;i<spans.length;i++){
+    spans[i].classList.remove('current','correct','incorrect');
+    if (i < index){
+      if (typed[i] === true) spans[i].classList.add('correct');
+      else if (typed[i] === false) spans[i].classList.add('incorrect');
+    }
+  }
+  if (index < spans.length){
+    spans[index].classList.add('current');
+    // auto-scroll to keep current in view (center-ish)
+    const rect = spans[index].getBoundingClientRect();
+    const contRect = lesson.getBoundingClientRect();
+    if (rect.top < contRect.top || rect.bottom > contRect.bottom){
+      lesson.scrollTop = spans[index].offsetTop - lesson.clientHeight / 2 + spans[index].clientHeight / 2;
+    }
+  }
+}
+
+// update progress, WPM, accuracy
+function updateStats(){
+  const pct = Math.round((index / practiceText.length) * 100);
+  progress.style.width = pct + '%';
+
+  if (!startTs || totalTyped === 0){
+    wpmEl.textContent = '0';
+    accEl.textContent = '100%';
+    return;
+  }
+  const minutes = Math.max((Date.now() - startTs) / 60000, 1/60000);
+  const wpm = Math.round((correctCount / 5) / minutes);
+  const accuracy = Math.round((correctCount / totalTyped) * 100);
+  wpmEl.textContent = isFinite(wpm) ? wpm : 0;
+  accEl.textContent = (isFinite(accuracy) ? accuracy : 100) + '%';
+}
+
+// handle keyboard
+document.addEventListener('keydown', (e) => {
+  // ignore combos
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  // start timer on first keystroke
+  if (!startTs) startTs = Date.now();
+
+  // prevent default for space/backspace/tab to avoid page scroll
+  if (e.code === 'Space' || e.code === 'Backspace' || e.code === 'Tab') e.preventDefault();
+
+  // Backspace -> undo
+  if (e.key === 'Backspace'){
+    if (index === 0) return;
+    index--;
+    if (typeof typed[index] !== 'undefined'){
+      if (typed[index]) correctCount = Math.max(0, correctCount - 1);
+      totalTyped = Math.max(0, totalTyped - 1);
+      typed[index] = undefined;
+    }
+    highlight();
+    updateStats();
+    return;
+  }
+
+  // handle only printable single characters (include space)
+  if (e.key.length === 1){
+    if (index >= practiceText.length) return; // beyond end
+    const expected = practiceText[index];
+    const actual = e.key;
+    const isCorrect = actual === expected;
+    typed[index] = !!isCorrect;
+    totalTyped++;
+    if (isCorrect) correctCount++;
+    index++;
+    highlight();
+    updateStats();
+  }
+});
+
+// restart
+restartBtn.addEventListener('click', () => {
+  index = 0;
+  typed = new Array(practiceText.length);
+  totalTyped = 0;
+  correctCount = 0;
+  startTs = null;
+  lesson.scrollTop = 0;
+  renderSpans();
+  updateStats();
+});
+
+// focus helper
+focusBtn.addEventListener('click', ()=> {
+  window.focus();
+  const cur = lesson.querySelector('.char.current');
+  if (cur) cur.scrollIntoView({block:'center',behavior:'smooth'});
+});
+
+lesson.addEventListener('click', ()=> {
+  window.focus();
+  const cur = lesson.querySelector('.char.current');
+  if (cur) cur.scrollIntoView({block:'center',behavior:'smooth'});
+});
+
+// initial render
+renderSpans();
+updateStats();
+
+// expose for debugging
+window.__typingPractice = {
+  text: practiceText,
+  reset: () => restartBtn.click()
+};
+</script>
+</body>
+</html>
